@@ -25,10 +25,11 @@ jobs:
       # Étape C : Installer XGBoost et Pandas
       - name: Installation des bibliothèques IA
         run: |
+          cd Cloud_IA_IRM
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Étape D : Lancer le cerveau IA
       - name: Exécution de l'analyse XGBoost
         run: |
+          cd Cloud_IA_IRM
           python ia_irm.py

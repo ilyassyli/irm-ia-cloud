@@ -1,35 +1,33 @@
 name: IA Monitoring IRM
 
-# 1. LE ROBOT HORLOGE (Toutes les 30 minutes)
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *' # Exécute toutes les 30 minutes
+    - cron: '*/30 * * * *'
 
-# 2. LE TRAVAIL À FAIRE
 jobs:
   analyse_ia:
-    runs-on: ubuntu-latest # Utilise un PC Linux puissant de GitHub
+    runs-on: ubuntu-latest
+    
+    # ---> LA SOLUTION MAGIQUE : On dit à GitHub de se placer dans le dossier <---
+    defaults:
+      run:
+        working-directory: ./Cloud_IA_IRM
 
     steps:
-      # Étape A : Récupérer les fichiers depuis ton compte Github
       - name: Récupération du code
         uses: actions/checkout@v3
 
-      # Étape B : Installer Python
       - name: Configuration de Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # Étape C : Installer XGBoost et Pandas
       - name: Installation des bibliothèques IA
         run: |
-          cd Cloud_IA_IRM
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Exécution de l'analyse XGBoost
         run: |
-          cd Cloud_IA_IRM
           python ia_irm.py

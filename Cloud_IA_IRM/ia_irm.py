@@ -123,6 +123,7 @@ elif statut == "NORMAL":
 # 7. ENVOI DE L'EMAIL FORMATÉ PROFESSIONNEL
 # ==========================================
 if envoyer_email_flag:
+    heure_actuelle = datetime.now().strftime("%d/%m/%Y %H:%M")
     sujet = f"[ALERTE IA - {statut}] Diagnostic IRM Siemens"
     
     # Création d'un email HTML très propre

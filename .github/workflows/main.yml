@@ -1,5 +1,5 @@
 name: IA Monitoring IRM
-
+workflow_dispatch: 
 # 1. LE ROBOT HORLOGE (Toutes les 30 minutes)
 on:
   schedule:

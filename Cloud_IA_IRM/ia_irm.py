@@ -16,9 +16,9 @@ TS_READ_API_KEY = 'FCMJY57R7S9HY7W4' # MET TA VRAIE CLE ICI
 MODELE_PATH = "modele_siemens_v1.json"
 FICHIER_ETAT = "etat_alerte.txt" # Fichier pour l'anti-spam
 
-EMAIL_EXPEDITEUR = "ilyassayli033@gmail.com"
-MOT_DE_PASSE_EMAIL = "yxwcmybrdliatcpx "
-EMAIL_DESTINATAIRE = "ilyassnbihi8@gmail.com"
+EMAIL_SENDER = "ilyassayli033@gmail.com"
+EMAIL_PASSWORD = "yxwcmybrdliatcpx"
+EMAIL_RECEIVER = "ilyassnbihi8@gmail.com"
 
 # ==========================================
 # 2. CHARGEMENT DU MODÈLE

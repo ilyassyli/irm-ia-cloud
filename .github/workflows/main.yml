@@ -1,0 +1,33 @@
+name: IA Monitoring IRM
+
+# 1. LE ROBOT HORLOGE (Toutes les 30 minutes)
+on:
+  schedule:
+    - cron: '*/30 * * * *' # Exécute toutes les 30 minutes
+
+# 2. LE TRAVAIL À FAIRE
+jobs:
+  analyse_ia:
+    runs-on: ubuntu-latest # Utilise un PC Linux puissant de GitHub
+
+    steps:
+      # Étape A : Récupérer les fichiers depuis ton compte Github
+      - name: Récupération du code
+        uses: actions/checkout@v3
+
+      # Étape B : Installer Python
+      - name: Configuration de Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # Étape C : Installer XGBoost et Pandas
+      - name: Installation des bibliothèques IA
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Étape D : Lancer le cerveau IA
+      - name: Exécution de l'analyse XGBoost
+        run: |
+          python ia_irm.py

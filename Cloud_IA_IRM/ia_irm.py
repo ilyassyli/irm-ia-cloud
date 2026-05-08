@@ -76,31 +76,28 @@ except Exception as e:
     exit()
 
 # ==========================================
-# 5. PRÉDICTION IA ET VERDICT
+# 5. PRÉDICTION ET VERDICT
 # ==========================================
 prediction_jours = float(modele.predict(donnees_ia)[0])
-prediction_heures = prediction_jours * 24
-heure_actuelle = datetime.now().strftime("%d/%m/%Y %H:%M")
 
 if prediction_jours >= 1.2:
     statut = "NORMAL"
     couleur = "#28a745" # Vert
     emoji_statut = "🟢"
-    message_alerte = "L'aimant est sain. Aucune anomalie détectée."
+    message_alerte = "L'aimant est sain. Aucune anomalie critique détectée par l'IA."
     envoyer_email_flag = False
 elif prediction_jours >= 0.5:
     statut = "ATTENTION"
     couleur = "#ffc107" # Orange
     emoji_statut = "🟠"
-    message_alerte = f"Dégradation thermique détectée. Intervention recommandée sous {int(prediction_heures)}h."
+    message_alerte = "Dérive thermique anormale détectée par l'IA. Surveillance renforcée requise."
     envoyer_email_flag = True
 else:
     statut = "CRITIQUE"
     couleur = "#dc3545" # Rouge
     emoji_statut = "🔴"
-    message_alerte = f"Risque de Quench imminent ! Panne estimée dans {int(prediction_heures)}h !"
+    message_alerte = "Risque de Quench imminent détecté par l'IA ! Intervention immédiate requise."
     envoyer_email_flag = True
-
 # ==========================================
 # 6. LOGIQUE ANTI-SPAM INTELLIGENTE
 # ==========================================
@@ -138,7 +135,6 @@ if envoyer_email_flag:
             <h3>Diagnostic de l'Intelligence Artificielle (XGBoost)</h3>
             <p><strong>Statut :</strong> <span style="color: {couleur}; font-weight: bold;">{statut}</span></p>
             <p><strong>Analyse :</strong> {message_alerte}</p>
-            <p><strong>RUL (Durée de vie restante) :</strong> {prediction_jours:.2f} jours ({prediction_heures:.1f} heures)</p>
             
             <hr style="border: 0; border-top: 1px solid #eee;">
             <h4>Données Capteurs brutes ({heure_actuelle})</h4>

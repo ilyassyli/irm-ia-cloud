@@ -170,3 +170,4 @@ if envoyer_email_flag:
         print(f"[{heure_actuelle}]  Erreur envoi email: {e}")
 else:
     print(f"[{heure_actuelle}]  Statut {statut} (Pas de changement, pas d'email envoyé).")
+    

@@ -1,18 +1,22 @@
-name: IA Monitoring IRM
-
+name: IA Monitoring & Rapport
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/30 * * * *'   # Diagnostic IA toutes les 30 min
+    - cron: '0 7 * * *'      # Rapport quotidien à 07h00 UTC (08h Maroc)
 
 jobs:
-  analyse_ia:
+
+  # ==========================================
+  # JOB 1 : DIAGNOSTIC IA (toutes les 30 min)
+  # Ne se lance PAS à 07h00 (heure du rapport)
+  # ==========================================
+  diagnostic_ia:
     runs-on: ubuntu-latest
-    
+    if: github.event.schedule != '0 7 * * *'
     defaults:
       run:
         working-directory: ./Cloud_IA_IRM
-
     steps:
       - name: Récupération du code
         uses: actions/checkout@v3
@@ -22,8 +26,37 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Installation et Exécution de l'IA
+      - name: Installation des dépendances
         run: |
           python -m pip install --upgrade pip
           pip install xgboost==1.7.6 pandas requests scipy scikit-learn pytz
-          python ia_irm.py
+
+      - name: Lancement du diagnostic IA
+        run: python ia_irm.py
+
+  # ==========================================
+  # JOB 2 : RAPPORT QUOTIDIEN (07h00 UTC)
+  # Ne se lance QUE sur le cron de 07h00
+  # ==========================================
+  rapport_quotidien:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 7 * * *'
+    defaults:
+      run:
+        working-directory: ./Cloud_IA_IRM
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v3
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Installation des dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pytz
+
+      - name: Envoi du rapport quotidien
+        run: python rapport_matin.py

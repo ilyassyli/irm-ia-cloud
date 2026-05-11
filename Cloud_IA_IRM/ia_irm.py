@@ -10,8 +10,8 @@ from datetime import datetime
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-TS_CHANNEL_ID = '3320495' # MET TON VRAI CHANNEL ID ICI
-TS_READ_API_KEY = 'FCMJY57R7S9HY7W4' # MET TA VRAIE CLE ICI
+TS_CHANNEL_ID = '3320504' # MET TON VRAI CHANNEL ID ICI
+TS_READ_API_KEY = 'K1GSWZYVTBEO852O' # MET TA VRAIE CLE ICI
 
 MODELE_PATH = "modele_siemens_v1.json"
 FICHIER_ETAT = "etat_alerte.txt" # Fichier pour l'anti-spam

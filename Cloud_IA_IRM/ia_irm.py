@@ -1,170 +1,302 @@
 import requests
 import pandas as pd
 import xgboost as xgb
-import smtplib
 import os
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+import pytz
 
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-TS_CHANNEL_ID = '3320504' # MET TON VRAI CHANNEL ID ICI
-TS_READ_API_KEY = 'K1GSWZYVTBEO852O' # MET TA VRAIE CLE ICI
+TS_CHANNEL_ID   = '3320504'
+TS_READ_API_KEY = 'K1GSWZYVTBEO852O'
+MODELE_PATH     = "modele_siemens_v4_classVF_orange.json"
+FICHIER_ETAT    = "etat_alerte.txt"
 
-MODELE_PATH = "modele_siemens_v1.json"
-FICHIER_ETAT = "etat_alerte.txt" # Fichier pour l'anti-spam
+EMAIL_SENDER    = "ilyassayli033@gmail.com"
+EMAIL_PASSWORD  = "yxwcmybrdliatcpx"
+EMAIL_RECEIVER  = "ilyassnbihi8@gmail.com"
 
-EMAIL_SENDER = "ilyassayli033@gmail.com"
-EMAIL_PASSWORD = "yxwcmybrdliatcpx"
-EMAIL_RECEIVER = "ilyassnbihi8@gmail.com"
+# Ordre exact des 19 features du modèle entraîné (NE PAS MODIFIER)
+FEATURES = [
+    'He_Level_L', 'He_Level_Perc',
+    'CHT_Temp_K', 'Link_Temp_K', 'Bore_Temp_K',
+    'Magnet_Pressure_psiA', 'Heater_Power_W',
+    'CHT_Temp_Lag1', 'CHT_Temp_Lag5',
+    'Pressure_Lag1', 'Heater_Lag1', 'He_Level_Lag1',
+    'Vitesse_Chauffe_CHT', 'Vitesse_Pression',
+    'Vitesse_Heater', 'Vitesse_He_Level',
+    'CHT_Moyenne_10', 'He_Level_Moyenne_10', 'Pression_Moyenne_10'
+]
 
 # ==========================================
 # 2. CHARGEMENT DU MODÈLE
+# Zone de risque 1 : fichier manquant ou corrompu
 # ==========================================
 try:
-    modele = xgb.XGBRegressor()
+    modele = xgb.XGBClassifier()
     modele.load_model(MODELE_PATH)
+    print(f"Modèle V4 Classifier chargé depuis '{MODELE_PATH}'.")
 except Exception as e:
-    print(f"Erreur chargement modèle: {e}")
-    exit()
+    print(f"ERREUR FATALE — Modèle introuvable ou corrompu : {e}")
+    print(f"Vérifiez que '{MODELE_PATH}' est bien dans le même dossier que ce script.")
+    exit(1)  # Arrêt propre avec code d'erreur
 
 # ==========================================
-# 3. RÉCUPÉRATION DES DONNÉES THINGSPEAK
+# 3. ORCHESTRATEUR PRINCIPAL
 # ==========================================
-try:
-    url = f"https://api.thingspeak.com/channels/{TS_CHANNEL_ID}/feeds.json?results=10&api_key={TS_READ_API_KEY}"
-    reponse = requests.get(url, timeout=10).json()
-    df_brut = pd.DataFrame(reponse['feeds'])
-except Exception as e:
-    print(f"Erreur réseau ThingSpeak: {e}")
-    exit()
+def orchestrateur_ia():
 
-# Renomme les champs (ADAPTE LES fieldX SI NECESSAIRE)
-# On utilise errors='coerce' pour transformer les valeurs vides en NaN
-df_capteurs = pd.DataFrame({
-    'He_Level_L': pd.to_numeric(df_brut['field1'], errors='coerce'),
-    'CHT_Temp_K': pd.to_numeric(df_brut['field2'], errors='coerce'),
-    'Link_Temp_K': pd.to_numeric(df_brut['field3'], errors='coerce'),
-    'Bore_Temp_K': pd.to_numeric(df_brut['field4'], errors='coerce'),
-    'Magnet_Pressure_psiA': pd.to_numeric(df_brut['field5'], errors='coerce')
-})
-
-# ==========================================
-# 4. FEATURE ENGINEERING (Mémoire IA)
-# ==========================================
-try:
-    donnees_ia = pd.DataFrame([{
-        'He_Level_L': df_capteurs.iloc[-1]['He_Level_L'],
-        'CHT_Temp_K': df_capteurs.iloc[-1]['CHT_Temp_K'],
-        'Link_Temp_K': df_capteurs.iloc[-1]['Link_Temp_K'],
-        'Bore_Temp_K': df_capteurs.iloc[-1]['Bore_Temp_K'],
-        'Magnet_Pressure_psiA': df_capteurs.iloc[-1]['Magnet_Pressure_psiA'],
-        'CHT_Temp_Lag1': df_capteurs.iloc[-2]['CHT_Temp_K'],
-        'CHT_Temp_Lag5': df_capteurs.iloc[-6]['CHT_Temp_K'],
-        'Pressure_Lag1': df_capteurs.iloc[-2]['Magnet_Pressure_psiA'],
-        'Vitesse_Chauffe_CHT': df_capteurs.iloc[-1]['CHT_Temp_K'] - df_capteurs.iloc[-2]['CHT_Temp_K'],
-        'Vitesse_Pression': df_capteurs.iloc[-1]['Magnet_Pressure_psiA'] - df_capteurs.iloc[-2]['Magnet_Pressure_psiA'],
-        'CHT_Moyenne_10': df_capteurs['CHT_Temp_K'].mean(),
-        'He_Level_Moyenne_10': df_capteurs['He_Level_L'].mean()
-    }])
-    # Remplacer les NaN potentiels par 0 pour ne pas faire planter XGBoost
-    donnees_ia = donnees_ia.fillna(0)
-except Exception as e:
-    print(f"Erreur Feature Engineering: {e}")
-    exit()
-
-# ==========================================
-# 5. PRÉDICTION ET VERDICT
-# ==========================================
-prediction_jours = float(modele.predict(donnees_ia)[0])
-
-if prediction_jours >= 1.2:
-    statut = "NORMAL"
-    couleur = "#28a745" # Vert
-    emoji_statut = "🟢"
-    message_alerte = "L'aimant est sain. Aucune anomalie critique détectée par l'IA."
-    envoyer_email_flag = False
-elif prediction_jours >= 0.5:
-    statut = "ATTENTION"
-    couleur = "#ffc107" # Orange
-    emoji_statut = "🟠"
-    message_alerte = "Dérive thermique anormale détectée par l'IA. Surveillance renforcée requise."
-    envoyer_email_flag = True
-else:
-    statut = "CRITIQUE"
-    couleur = "#dc3545" # Rouge
-    emoji_statut = "🔴"
-    message_alerte = "Risque de Quench imminent détecté par l'IA ! Intervention immédiate requise."
-    envoyer_email_flag = True
-# ==========================================
-# 6. LOGIQUE ANTI-SPAM INTELLIGENTE
-# ==========================================
-etat_precedent = "NORMAL"
-if os.path.exists(FICHIER_ETAT):
-    with open(FICHIER_ETAT, "r") as f:
-        etat_precedent = f.read().strip()
-
-# Si l'état n'a pas changé (et que ce n'est pas critique), on n'envoie pas d'email pour ne pas spammer
-if statut == etat_precedent:
-    envoyer_email_flag = False
-
-# Si l'état change (ex: Normal vers Attention), on met à jour le fichier et on autorise l'envoi
-if envoyer_email_flag:
-    with open(FICHIER_ETAT, "w") as f:
-        f.write(statut)
-elif statut == "NORMAL":
-    # Si on revient à la normal, on efface le fichier d'alerte
-    if os.path.exists(FICHIER_ETAT):
-        os.remove(FICHIER_ETAT)
-
-# ==========================================
-# 7. ENVOI DE L'EMAIL FORMATÉ PROFESSIONNEL
-# ==========================================
-if envoyer_email_flag:
-    heure_actuelle = datetime.now().strftime("%d/%m/%Y %H:%M")
-    sujet = f"[ALERTE IA - {statut}] Diagnostic IRM Siemens"
-    
-    # Création d'un email HTML très propre
-    html_content = f"""
-    <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; padding: 20px;">
-        <div style="background-color: {couleur}; color: white; padding: 15px; text-align: center;">
-            <h2 style="margin: 0;">{emoji_statut} SYSTÈME DE MAINTENANCE PRÉDICTIVE</h2>
-        </div>
-        <div style="padding: 20px;">
-            <h3>Diagnostic de l'Intelligence Artificielle (XGBoost)</h3>
-            <p><strong>Statut :</strong> <span style="color: {couleur}; font-weight: bold;">{statut}</span></p>
-            <p><strong>Analyse :</strong> {message_alerte}</p>
-            
-            <hr style="border: 0; border-top: 1px solid #eee;">
-            <h4>Données Capteurs brutes ({heure_actuelle})</h4>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd;"><strong>Hélium</strong></td><td style="padding: 8px; border: 1px solid #ddd;">{donnees_ia.iloc[0]['He_Level_L']} L</td></tr>
-                <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Température CHT</strong></td><td style="padding: 8px; border: 1px solid #ddd;">{donnees_ia.iloc[0]['CHT_Temp_K']} K</td></tr>
-                <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd;"><strong>Pression</strong></td><td style="padding: 8px; border: 1px solid #ddd;">{donnees_ia.iloc[0]['Magnet_Pressure_psiA']} psiA</td></tr>
-                <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Vitesse Chauffe</strong></td><td style="padding: 8px; border: 1px solid #ddd;">{donnees_ia.iloc[0]['Vitesse_Chauffe_CHT']:.2f} K/min</td></tr>
-            </table>
-            <p style="color: #888; font-size: 12px; text-align: center; margin-top: 20px;">Email généré automatiquement par le Serveur Cloud IA - PFE IRM Monitoring</p>
-        </div>
-    </div>
-    """
-
+    # ------------------------------------------
+    # ZONE RÉSEAU — ThingSpeak
+    # Zone de risque 2 : réseau absent, API down, timeout
+    # ------------------------------------------
     try:
-        msg = MIMEMultipart("alternative")
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = EMAIL_RECEIVER
-        msg['Subject'] = sujet
-        msg.attach(MIMEText(html_content, "html", "utf-8"))
-
-        serveur = smtplib.SMTP('smtp.gmail.com', 587)
-        serveur.starttls()
-        serveur.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        serveur.send_message(msg)
-        serveur.quit()
-        print(f"[{heure_actuelle}]  Email {statut} envoyé !")
+        url = (
+            f"https://api.thingspeak.com/channels/{TS_CHANNEL_ID}"
+            f"/feeds.json?results=20&api_key={TS_READ_API_KEY}"
+        )
+        data = requests.get(url, timeout=10).json()['feeds']
+        df   = pd.DataFrame(data)
+        print(f"{len(df)} points récupérés depuis ThingSpeak.")
     except Exception as e:
-        print(f"[{heure_actuelle}]  Erreur envoi email: {e}")
-else:
-    print(f"[{heure_actuelle}]  Statut {statut} (Pas de changement, pas d'email envoyé).")
-    
+        print(f"Erreur réseau ThingSpeak : {e}")
+        print("Vérifiez votre connexion internet ou la clé API.")
+        return  # Arrêt propre, on réessaiera au prochain cycle
+
+    # ------------------------------------------
+    # ZONE CALCUL + PRÉDICTION
+    # Zone de risque 3 : données manquantes, champs vides, erreur modèle
+    # ------------------------------------------
+    try:
+        # Mapping des 7 fields ThingSpeak → variables modèle
+        # IMPORTANT : l'ordre des fields doit correspondre à ton canal ThingSpeak
+        df_c = pd.DataFrame({
+            'He_Level_L'          : pd.to_numeric(df['field1'], errors='coerce'),
+            'He_Level_Perc'       : pd.to_numeric(df['field2'], errors='coerce'),
+            'CHT_Temp_K'          : pd.to_numeric(df['field3'], errors='coerce'),
+            'Link_Temp_K'         : pd.to_numeric(df['field4'], errors='coerce'),
+            'Bore_Temp_K'         : pd.to_numeric(df['field5'], errors='coerce'),
+            'Magnet_Pressure_psiA': pd.to_numeric(df['field6'], errors='coerce'),
+            'Heater_Power_W'      : pd.to_numeric(df['field7'], errors='coerce'),
+        })
+
+        # Vérification du nombre minimum de points pour les lags
+        if len(df_c) < 6:
+            print(f"Pas assez de points : {len(df_c)} reçus, 6 minimum requis pour Lag5.")
+            return
+
+        # Raccourcis pour les lignes clés
+        d  = df_c.iloc[-1]   # dernière mesure  (t = maintenant)
+        a1 = df_c.iloc[-2]   # avant-dernière   (t - 1 point)
+        a5 = df_c.iloc[-6]   # il y a 5 points  (t - 5 points)
+
+        # Construction des 19 features dans l'ordre exact d'entraînement
+        input_ia = pd.DataFrame([{
+            # --- Capteurs bruts (7) ---
+            'He_Level_L'          : d['He_Level_L'],
+            'He_Level_Perc'       : d['He_Level_Perc'],
+            'CHT_Temp_K'          : d['CHT_Temp_K'],
+            'Link_Temp_K'         : d['Link_Temp_K'],
+            'Bore_Temp_K'         : d['Bore_Temp_K'],
+            'Magnet_Pressure_psiA': d['Magnet_Pressure_psiA'],
+            'Heater_Power_W'      : d['Heater_Power_W'],
+            # --- Lags / Mémoire temporelle (5) ---
+            'CHT_Temp_Lag1'       : a1['CHT_Temp_K'],
+            'CHT_Temp_Lag5'       : a5['CHT_Temp_K'],
+            'Pressure_Lag1'       : a1['Magnet_Pressure_psiA'],
+            'Heater_Lag1'         : a1['Heater_Power_W'],
+            'He_Level_Lag1'       : a1['He_Level_L'],
+            # --- Gradients / Vitesses de variation (4) ---
+            'Vitesse_Chauffe_CHT' : d['CHT_Temp_K']           - a1['CHT_Temp_K'],
+            'Vitesse_Pression'    : d['Magnet_Pressure_psiA'] - a1['Magnet_Pressure_psiA'],
+            'Vitesse_Heater'      : d['Heater_Power_W']       - a1['Heater_Power_W'],
+            'Vitesse_He_Level'    : d['He_Level_L']           - a1['He_Level_L'],
+            # --- Moyennes glissantes / Tendances (3) ---
+            'CHT_Moyenne_10'      : df_c['CHT_Temp_K'].tail(10).mean(),
+            'He_Level_Moyenne_10' : df_c['He_Level_L'].tail(10).mean(),
+            'Pression_Moyenne_10' : df_c['Magnet_Pressure_psiA'].tail(10).mean(),
+        }])[FEATURES].fillna(0)  # fillna(0) pour les NaN résiduels
+
+        # --- Prédiction ---
+        classe = int(modele.predict(input_ia)[0])
+
+        # Dictionnaire de diagnostic (classe → statut, emoji, couleur, envoyer, message)
+        diag = {
+            0: ("NORMAL",      "🟢", "#28a745", False,
+                "L'aimant est sain. Aucune anomalie détectée par l'IA."),
+            1: ("DÉGRADATION", "🟠", "#ffc107", True,
+                "Dégradation progressive détectée. Surveillance renforcée requise."),
+            2: ("CRITIQUE",    "🔴", "#dc3545", True,
+                "Risque de Quench imminent ! Intervention immédiate requise.")
+        }
+        statut, emoji, couleur, envoyer, message = diag[classe]
+
+        # Heure au fuseau horaire du Maroc
+        fuseau_maroc = pytz.timezone('Africa/Casablanca')
+        heure = datetime.now(fuseau_maroc).strftime("%d/%m/%Y %H:%M")
+
+        print(f"[{heure}] Diagnostic : {emoji} {statut}")
+
+        # --- Logique Anti-Spam ---
+        # On n'envoie un email que si l'état a CHANGÉ depuis la dernière exécution
+        etat_precedent = "NORMAL"
+        if os.path.exists(FICHIER_ETAT):
+            with open(FICHIER_ETAT) as f:
+                etat_precedent = f.read().strip()
+
+        if statut == etat_precedent:
+            envoyer = False  # Même état qu'avant → pas d'email
+
+        # Mise à jour du fichier d'état
+        if envoyer:
+            with open(FICHIER_ETAT, "w") as f:
+                f.write(statut)
+        elif statut == "NORMAL" and os.path.exists(FICHIER_ETAT):
+            os.remove(FICHIER_ETAT)  # Retour à la normale → on efface l'alerte
+
+    except Exception as e:
+        print(f"Erreur calcul/prédiction : {e}")
+        return  # Arrêt propre, le diagnostic n'a pas pu être fait
+
+    # ------------------------------------------
+    # ZONE EMAIL
+    # Zone de risque 4 : SMTP down, mot de passe expiré, réseau
+    # Séparée pour ne pas bloquer si le diagnostic a réussi
+    # ------------------------------------------
+    if envoyer:
+        try:
+            html = f"""
+            <div style="font-family:Arial,sans-serif;max-width:600px;
+                        margin:0 auto;border:1px solid #ddd;">
+
+                <div style="background:{couleur};color:white;
+                            padding:15px;text-align:center;">
+                    <h2 style="margin:0;">{emoji} MAINTENANCE PRÉDICTIVE IRM SIEMENS</h2>
+                </div>
+
+                <div style="padding:20px;">
+                    <h3>Diagnostic IA — XGBoost V4 (82.52% de précision)</h3>
+
+                    <p><strong>Statut :</strong>
+                       <span style="color:{couleur};font-weight:bold;font-size:16px;">
+                       {statut}</span>
+                    </p>
+
+                    <p><strong>Analyse :</strong> {message}</p>
+
+                    <hr style="border:0;border-top:1px solid #eee;margin:15px 0;">
+
+                    <h4>Données capteurs — {heure} (Heure Maroc)</h4>
+
+                    <table style="width:100%;border-collapse:collapse;">
+                      <tr style="background:#f9f9f9;">
+                        <td style="padding:8px;border:1px solid #ddd;width:50%;">
+                          <strong>Niveau Hélium</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {d['He_Level_L']:.1f} L &nbsp;|&nbsp;
+                          {d['He_Level_Perc']:.0f}%</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Température CHT</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {d['CHT_Temp_K']:.2f} K</td>
+                      </tr>
+                      <tr style="background:#f9f9f9;">
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Pression aimant</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {d['Magnet_Pressure_psiA']:.3f} psiA</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Température Link</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {d['Link_Temp_K']:.2f} K</td>
+                      </tr>
+                      <tr style="background:#f9f9f9;">
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Température Bore</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {d['Bore_Temp_K']:.2f} K</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Puissance Heater</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {d['Heater_Power_W']:.2f} W</td>
+                      </tr>
+                    </table>
+
+                    <hr style="border:0;border-top:1px solid #eee;margin:15px 0;">
+
+                    <h4>Indicateurs dynamiques (calculés par l'IA)</h4>
+
+                    <table style="width:100%;border-collapse:collapse;">
+                      <tr style="background:#f9f9f9;">
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Vitesse chauffe CHT</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {input_ia.iloc[0]['Vitesse_Chauffe_CHT']:.3f} K/point</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Vitesse He Level</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {input_ia.iloc[0]['Vitesse_He_Level']:.2f} L/point</td>
+                      </tr>
+                      <tr style="background:#f9f9f9;">
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Vitesse Pression</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {input_ia.iloc[0]['Vitesse_Pression']:.4f} psiA/point</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          <strong>Moyenne CHT (10 pts)</strong></td>
+                        <td style="padding:8px;border:1px solid #ddd;">
+                          {input_ia.iloc[0]['CHT_Moyenne_10']:.2f} K</td>
+                      </tr>
+                    </table>
+
+                    <p style="color:#888;font-size:11px;text-align:center;
+                               margin-top:20px;border-top:1px solid #eee;
+                               padding-top:10px;">
+                        Généré automatiquement par le Serveur Cloud IA<br>
+                        PFE — Système de Maintenance Prédictive IRM Siemens<br>
+                        Modèle : XGBoost Classifier V4 — 3 classes (Normal / Dégradation / Critique)
+                    </p>
+                </div>
+            </div>"""
+
+            msg = MIMEMultipart("alternative")
+            msg['From']    = EMAIL_SENDER
+            msg['To']      = EMAIL_RECEIVER
+            msg['Subject'] = f"[ALERTE IA - {statut}] Diagnostic IRM Siemens — {heure}"
+            msg.attach(MIMEText(html, "html", "utf-8"))
+
+            with smtplib.SMTP('smtp.gmail.com', 587) as s:
+                s.starttls()
+                s.login(EMAIL_SENDER, EMAIL_PASSWORD)
+                s.send_message(msg)
+
+            print(f"[{heure}] Email '{statut}' envoyé à {EMAIL_RECEIVER}")
+
+        except Exception as e:
+            print(f"Erreur envoi email : {e}")
+            print("Le diagnostic a quand même été effectué — seul l'email a échoué.")
+            # On ne plante pas : le diagnostic est valide même sans email
+
+    else:
+        print(f"[{heure}] {emoji} {statut} — état inchangé, pas d'email envoyé.")
+
+
+# ==========================================
+# 7. POINT D'ENTRÉE
+# ==========================================
+if __name__ == "__main__":
+    orchestrateur_ia()
